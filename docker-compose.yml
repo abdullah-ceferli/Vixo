@@ -1,0 +1,125 @@
+name: vixo
+
+x-vixo-environment: &vixo-environment
+  DATABASE_URL: mysql://${MYSQL_USER:-vixo}:${MYSQL_PASSWORD:?Create .env with MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-Vixo}
+  REDIS_URL: redis://redis:6379
+  NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://127.0.0.1:5173}
+  SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-vixo_session}
+  SESSION_TTL_DAYS: ${SESSION_TTL_DAYS:-30}
+  SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+  MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10737418240}
+  UPLOAD_CHUNK_BYTES: ${UPLOAD_CHUNK_BYTES:-8388608}
+  HLS_SEGMENT_SECONDS: ${HLS_SEGMENT_SECONDS:-4}
+  VIDEO_CRF: ${VIDEO_CRF:-22}
+  VIDEO_PRESET: ${VIDEO_PRESET:-medium}
+  WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-1}
+  DELETE_SOURCE_AFTER_TRANSCODE: ${DELETE_SOURCE_AFTER_TRANSCODE:-false}
+  STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
+  LOCAL_STORAGE_PATH: /app/storage
+  FFMPEG_PATH: ffmpeg
+  FFPROBE_PATH: ffprobe
+  S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+  S3_REGION: ${S3_REGION:-us-east-1}
+  S3_BUCKET: ${S3_BUCKET:-vixo}
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:-vixo}
+  S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+  S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-Vixo}
+      MYSQL_USER: ${MYSQL_USER:-vixo}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Create .env with MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Create .env with MYSQL_ROOT_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_PASSWORD}\" mysql --protocol=TCP --host=127.0.0.1 --user=\"$${MYSQL_USER}\" --database=\"$${MYSQL_DATABASE}\" --execute='SELECT 1' --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    profiles: ["s3"]
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-vixo}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-replace_with_a_long_unique_minio_password}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+
+  app:
+    build:
+      context: .
+      target: production
+    restart: unless-stopped
+    environment: *vixo-environment
+    volumes:
+      - media_storage:/app/storage
+      - upload_tmp:/app/tmp
+    ports:
+      - "127.0.0.1:5173:5173"
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:5173/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  migrate:
+    build:
+      context: .
+      target: development
+    command: npx prisma migrate deploy
+    environment:
+      DATABASE_URL: mysql://${MYSQL_USER:-vixo}:${MYSQL_PASSWORD:?Create .env with MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-Vixo}
+    depends_on:
+      mysql: { condition: service_healthy }
+    restart: "no"
+
+  worker:
+    build:
+      context: .
+      target: development
+    restart: unless-stopped
+    command: sh -c "npx prisma generate && npm run worker"
+    environment: *vixo-environment
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules
+      - media_storage:/app/storage
+      - upload_tmp:/app/tmp
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      app: { condition: service_healthy }
+
+volumes:
+  mysql_data:
+  redis_data:
+  minio_data:
+  node_modules:
+  media_storage:
+  upload_tmp:

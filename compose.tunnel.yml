@@ -1,0 +1,11 @@
+# Optional overlay for a remotely managed Cloudflare Tunnel.
+# Configure its published route to http://app:5173 in Cloudflare first.
+services:
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN in your ignored .env}
+    depends_on:
+      app: { condition: service_healthy }

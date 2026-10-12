@@ -1,0 +1,15 @@
+node_modules
+.next
+.git
+storage
+tmp
+.env
+.env.*
+coverage
+backups
+data
+.cloudflared
+*.pem
+*.key
+*.tsbuildinfo
+npm-debug.log

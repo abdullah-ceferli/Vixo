@@ -1,0 +1,17 @@
+node_modules
+.next
+.env
+.env.*
+!.env.example
+.cloudflared/
+*.pem
+*.key
+coverage
+storage
+tmp
+backups/
+data/
+*.tsbuildinfo
+*.log
+.DS_Store
+dist

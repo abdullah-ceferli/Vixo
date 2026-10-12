@@ -1,0 +1,311 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum VideoVisibility {
+  PUBLIC
+  UNLISTED
+  PRIVATE
+}
+
+enum VideoStatus {
+  UPLOADING
+  PROCESSING
+  READY
+  FAILED
+  DELETING
+}
+
+enum ReactionType {
+  LIKE
+  DISLIKE
+}
+
+enum UploadStatus {
+  CREATED
+  UPLOADING
+  COMPLETE
+  CANCELLED
+  FAILED
+}
+
+enum ProcessingStatus {
+  QUEUED
+  ACTIVE
+  COMPLETE
+  FAILED
+  CANCELLED
+}
+
+enum NotificationType {
+  SUBSCRIPTION
+  COMMENT
+  REPLY
+  VIDEO_READY
+  SYSTEM
+}
+
+model User {
+  id             String          @id @default(cuid())
+  username       String          @unique @db.VarChar(40)
+  email          String          @unique @db.VarChar(191)
+  passwordHash   String          @db.VarChar(255)
+  avatarUrl      String?         @db.VarChar(1024)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  channel        Channel?
+  sessions       Session[]
+  videoLikes     VideoLike[]
+  comments       Comment[]
+  commentLikes   CommentLike[]
+  subscriptions  Subscription[]  @relation("Subscriber")
+  playlists      Playlist[]
+  watchHistory   WatchHistory[]
+  videoViews     VideoView[]
+  notifications  Notification[]
+  uploadSessions UploadSession[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique @db.Char(64)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Channel {
+  id            String         @id @default(cuid())
+  ownerId       String         @unique
+  name          String         @db.VarChar(100)
+  handle        String         @unique @db.VarChar(50)
+  description   String         @default(dbgenerated("('')")) @db.Text
+  avatarUrl     String?        @db.VarChar(1024)
+  bannerUrl     String?        @db.VarChar(1024)
+  createdAt     DateTime       @default(now())
+  owner         User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  videos        Video[]
+  subscribers   Subscription[] @relation("SubscribedChannel")
+
+  @@index([createdAt])
+}
+
+model Video {
+  id                 String          @id @default(cuid())
+  channelId          String
+  title              String          @db.VarChar(160)
+  description        String          @default(dbgenerated("('')")) @db.Text
+  category           String          @default("General") @db.VarChar(60)
+  tags               Json?
+  thumbnailUrl       String?         @db.VarChar(1024)
+  duration           Int             @default(0)
+  visibility         VideoVisibility @default(PRIVATE)
+  status             VideoStatus     @default(UPLOADING)
+  masterPlaylistPath String?         @db.VarChar(1024)
+  processingProgress Int             @default(0)
+  sourceWidth        Int?
+  sourceHeight       Int?
+  sourcePath         String?         @db.VarChar(1024)
+  errorMessage       String?         @db.Text
+  viewCount          BigInt          @default(0)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  publishedAt        DateTime?
+  channel            Channel         @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  renditions         VideoRendition[]
+  comments           Comment[]
+  likes              VideoLike[]
+  playlistVideos     PlaylistVideo[]
+  watchHistory       WatchHistory[]
+  views              VideoView[]
+  uploadSessions     UploadSession[]
+  processingJobs     ProcessingJob[]
+
+  @@index([status, visibility, publishedAt(sort: Desc)])
+  @@index([channelId, createdAt(sort: Desc)])
+  @@index([viewCount(sort: Desc)])
+  @@index([category, publishedAt(sort: Desc)])
+  @@fulltext([title, description])
+}
+
+model VideoRendition {
+  id          String   @id @default(cuid())
+  videoId     String
+  resolution  Int
+  width       Int
+  height      Int
+  codec       String   @db.VarChar(40)
+  bitrate     Int
+  storagePath String   @db.VarChar(1024)
+  fileSize    BigInt
+  createdAt   DateTime @default(now())
+  video       Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@unique([videoId, resolution])
+  @@index([videoId])
+}
+
+model Comment {
+  id        String        @id @default(cuid())
+  videoId   String
+  userId    String
+  parentId  String?
+  body      String        @db.Text
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  video     Video         @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent    Comment?      @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   Comment[]     @relation("CommentReplies")
+  likes     CommentLike[]
+
+  @@index([videoId, createdAt(sort: Desc)])
+  @@index([parentId])
+}
+
+model CommentLike {
+  userId    String
+  commentId String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  comment   Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  @@id([userId, commentId])
+  @@index([commentId])
+}
+
+model VideoLike {
+  userId   String
+  videoId  String
+  type     ReactionType
+  createdAt DateTime     @default(now())
+  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video    Video        @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@id([userId, videoId])
+  @@index([videoId, type])
+}
+
+model Subscription {
+  subscriberId String
+  channelId    String
+  createdAt    DateTime @default(now())
+  subscriber   User     @relation("Subscriber", fields: [subscriberId], references: [id], onDelete: Cascade)
+  channel      Channel  @relation("SubscribedChannel", fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@id([subscriberId, channelId])
+  @@index([channelId])
+}
+
+model Playlist {
+  id          String          @id @default(cuid())
+  userId      String
+  name        String          @db.VarChar(120)
+  description String          @default(dbgenerated("('')")) @db.Text
+  visibility  VideoVisibility @default(PRIVATE)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  videos      PlaylistVideo[]
+
+  @@index([userId, updatedAt(sort: Desc)])
+}
+
+model PlaylistVideo {
+  playlistId String
+  videoId    String
+  position   Int
+  addedAt    DateTime @default(now())
+  playlist   Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  video      Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@id([playlistId, videoId])
+  @@unique([playlistId, position])
+  @@index([videoId])
+}
+
+model WatchHistory {
+  userId          String
+  videoId         String
+  progressSeconds Int      @default(0)
+  completed       Boolean  @default(false)
+  watchedAt       DateTime @updatedAt
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video           Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@id([userId, videoId])
+  @@index([userId, watchedAt(sort: Desc)])
+}
+
+model VideoView {
+  id        String   @id @default(cuid())
+  videoId   String
+  userId    String?
+  ipHash    String   @db.Char(64)
+  viewedAt  DateTime @default(now())
+  video     Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([videoId, viewedAt])
+  @@index([ipHash, videoId, viewedAt])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String           @db.VarChar(160)
+  body      String           @db.VarChar(500)
+  href      String?          @db.VarChar(1024)
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt(sort: Desc)])
+}
+
+model UploadSession {
+  id             String       @id @default(cuid())
+  userId         String
+  videoId        String
+  originalName   String       @db.VarChar(255)
+  expectedBytes  BigInt
+  receivedBytes  BigInt       @default(0)
+  mimeType       String       @db.VarChar(120)
+  temporaryPath  String       @db.VarChar(1024)
+  status         UploadStatus @default(CREATED)
+  expiresAt      DateTime
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video          Video        @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([expiresAt, status])
+}
+
+model ProcessingJob {
+  id          String           @id @default(cuid())
+  videoId     String
+  queueJobId  String?          @unique @db.VarChar(191)
+  status      ProcessingStatus @default(QUEUED)
+  attempts    Int              @default(0)
+  error       String?          @db.Text
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  video       Video            @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@index([videoId, createdAt(sort: Desc)])
+  @@index([status, createdAt])
+}
